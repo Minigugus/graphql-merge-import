@@ -7,26 +7,17 @@ export * from './load';
 
 export type GraphQLMergeImportOptions = LoadOptions & MergeOptions;
 
-export const graphqlMergeImport = async (pathOrUrl: string, options: GraphQLMergeImportOptions = {}) => {
-  const parts = await load(pathOrUrl, options);
-  const mergedDefinitions = await merge(
-    [...parts.values()]
-      .reduce((acc, part) => {
-        if (part.document) {
-          acc.push(part.document);
-        }
-        return acc;
-      }, ([] as DocumentNode[])),
-    options,
-  );
-  const finalDocument: DocumentNode = {
-    definitions: [
-      ...mergedDefinitions,
-    ],
-    kind: Kind.DOCUMENT,
+export const graphqlMergeImport =
+  async (pathOrUrl: string, options: GraphQLMergeImportOptions = {}): Promise<DocumentNode> => {
+    const parts = await load(pathOrUrl, options);
+    const mergedDefinitions = await merge(parts, options);
+    return {
+      definitions: [
+        ...mergedDefinitions,
+      ],
+      kind: Kind.DOCUMENT,
+    };
   };
-  return finalDocument;
-};
 
 // FIXME : `const graphqlMergeImport = require('graphql-merge-import')` not working
 //         due to incorrect generated types declarations

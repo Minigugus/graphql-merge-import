@@ -14,18 +14,14 @@ export const invokePlugins = async <T extends Plugin<T>, K extends keyof T>(
   operation: K,
   ...args: Parameters<Required<T>[K]>
 ): Promise<RemoveVoid<UnwrapPromise<ReturnType<Required<T>[K]>>>> => {
-  let value: any = NO_VALUE_SYMBOL;
   for (const plugin of plugins) {
     const opFn = plugin[operation];
     if (opFn) {
-      const result: UnwrapPromise<ReturnType<Required<T>[K]>> = await opFn.apply(plugin, args);
+      const result = await opFn.apply(plugin, args);
       if (typeof result === 'string' || (typeof result === 'object' && result)) {
-        value = result;
+        return result;
       }
     }
   }
-  if (value === NO_VALUE_SYMBOL) {
-    return defaultPlugin[operation].apply(defaultPlugin, args);
-  }
-  return value;
+  return defaultPlugin[operation].apply(defaultPlugin, args);
 };

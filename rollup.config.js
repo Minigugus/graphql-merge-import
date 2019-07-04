@@ -76,8 +76,8 @@ export default Object.entries(configs).map(([format, [chunks, outputConfig]]) =>
   external: [
     'fs',
     'url',
+    'util',
     'graphql/language/kinds',
-    'graphql/language/printer',
-    ...Object.getOwnPropertyNames(pkg.dependencies)
+    'graphql/language/parser'
   ]
 }));

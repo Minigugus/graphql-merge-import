@@ -1,10 +1,14 @@
-import { promises as fs } from 'fs';
+import { readFile as readFileWithCb } from 'fs';
 import { pathToFileURL, resolve } from 'url';
+import { promisify } from 'util';
 
-import { parse } from 'graphql';
 import { DocumentNode } from 'graphql/language/ast';
+import { parse } from 'graphql/language/parser';
 
 import { Awaitable, invokePlugins } from './utils';
+
+// Avoid warning in Node 10.x
+const readFile = promisify(readFileWithCb);
 
 export interface GraphQLImport {
   requested: '*' | string[];
@@ -18,86 +22,115 @@ export interface GraphQLImportedDocument {
 
 export interface LoadPlugin {
   resolveId?(importee: string, importer?: string): Awaitable<void | string>;
-  load?(toImport: GraphQLImport): Awaitable<void | string | GraphQLImportedDocument>;
-  transform?(ast: DocumentNode): Awaitable<void | DocumentNode>;
+  load?(url: string): Awaitable<void | string | GraphQLImportedDocument>;
+  transform?(ast: DocumentNode, origin: GraphQLImport): Awaitable<void | DocumentNode>;
 }
 
-export const getImports = (sdl: string): GraphQLImport[] => {
+export const getImports = (
+  sdl: string,
+  importRegex = /#\s?import\s+(?:(\*|(?:.+?))\s+from\s+)?('|")([^"']+)\2;?/g,
+  splitRegex = /,/,
+): GraphQLImport[] => {
   const imports: GraphQLImport[] = [];
-  const importRegex = /#\s?import\s+(?:(\*|(?:.+?))\s+from\s+)?('|")([^"']+)\2;?/g;
-  for (let match: RegExpExecArray | null; (match = importRegex.exec(sdl)) !== null; null) {
+  const regexp = RegExp(importRegex.source, importRegex.flags); // Avoid problems as `importRegex` is global
+  for (let match: RegExpExecArray | null; (match = regexp.exec(sdl)) !== null; null) {
     imports.push({
       id: match[3],
-      requested: (!match[1] || match[1] === '*' ? '*' : match[1].split(',').map((s) => s.trim()).filter((s) => s)),
+      requested: (!match[1] || match[1] === '*'
+        ? '*'
+        : match[1].split(splitRegex).map((s) => s.trim()).filter((s) => s)
+      ),
     });
   }
   return imports;
 };
 
-export const parseSDLWithImports = (sdl: string): GraphQLImportedDocument => {
-  const imports = getImports(sdl);
-  sdl = sdl.replace(/^\s*#.*?$/mg, '').trim();
+export const cachePlugin = () => {
+  const importCache = new Set<string>();
+  return {
+    async load(url: string): Promise<void | GraphQLImportedDocument> {
+      if (importCache.has(url)) {
+        return { // Fake an empty document to prevent cyclic importations
+          document: null,
+          imports: [],
+        };
+      }
+      importCache.add(url);
+    },
+  };
+};
+
+export const parseSDLWithImports = (sdl: string, importRegex?: RegExp): GraphQLImportedDocument => {
+  const imports = getImports(sdl, importRegex);
+  sdl = sdl.replace(/^\s*#.*?$/mg, '').trim(); // Remove comments to detect files without definitions
   return {
     document: sdl ? parse(sdl, { noLocation: true }) : null,
     imports,
   };
 };
 
-export const defaultLoadPlugin: (options: { dir?: string }) => Required<LoadPlugin> =
-  ({ dir = pathToFileURL(process.cwd()).href }) => ({
-    async load({ id }) {
-      let code: string;
-      const protocol: string | undefined = (/^(.+?):\/\//.exec(id) || [])[1];
-      switch (protocol) {
-        case 'file':
-          id = id.slice(7); // Remove `file://`
-        case undefined:
-          code = await fs.readFile(id, 'utf8');
-          break;
+export const defaultLoadPlugin: (dir?: string, importRegExp?: RegExp) => Required<LoadPlugin> =
+  (dir = pathToFileURL(process.cwd()).href, importRegExp) => {
+    const cache = cachePlugin();
+    return {
+      async load(url) {
+        const cached = await cache.load(url);
+        if (cached) {
+          return cached;
+        }
+        let code: string;
+        const protocol: string | undefined = (/^(.+?):\/\//.exec(url) || [])[1];
+        switch (protocol) {
+          case 'file':
+            url = url.slice(7); // Remove `file://`
+          case undefined: // If the id is not an URL, assume it's a path
+            code = await readFile(url, 'utf8');
+            break;
 
-        default:
-          throw new Error(`Unsupported protocol « ${protocol} » - Use the appropriate plugin to handle this protocol`);
-      }
-      return parseSDLWithImports(code);
-    },
-    resolveId(importee, importer) {
-      if (/^\/\//.test(importee)) {
-        importee = `file:${importee}`;
-      } else if (/^\//.test(importee)) {
-        importee = `file://${importee}`;
-      } else if (/^\.\.?\//.test(importee)) {
-        importee = resolve(importer || dir, importee);
-      }
-      return importee;
-    },
-    transform(ast) {
-      return ast;
-    },
-  });
+          default:
+            throw new Error(
+              `Unsupported protocol « ${protocol} » - Use the appropriate plugin to handle this protocol`,
+            );
+        }
+        return parseSDLWithImports(code, importRegExp);
+      },
+      resolveId(importee, importer) {
+        if (/^\/\//.test(importee)) { // Protocol relative URLs
+          importee = new URL(importer || 'file://').protocol + importee;
+        } else if (/^\//.test(importee)) {
+          importee = pathToFileURL(importee).href;
+        } else if (/^\.\.?\//.test(importee)) {
+          importee = resolve(importer || dir, importee);
+        } else if (!/^(.+?):\/\//.test(importee)) {
+          throw new Error(`Cannot resolve ID « ${importee} » - Use the appropriate plugin to handle this format`);
+        }
+        return importee;
+      },
+      transform(ast) {
+        return ast; // Not transformation
+      },
+    };
+  };
 
 export interface LoadOptions {
   dir?: string;
+  importRegex?: RegExp;
   plugins?: LoadPlugin[];
 }
 
-export const load = async (id: string, { plugins = [], ...config }: LoadOptions) => {
-  const defaultPlugin = defaultLoadPlugin(config);
-  const loadedCache = new Map<string, GraphQLImportedDocument | null>();
+export const load = async (id: string, { plugins = [], dir, importRegex }: LoadOptions) => {
+  const defaultPlugin = defaultLoadPlugin(dir, importRegex);
+  const loadedList = new Set<DocumentNode>();
   const importGraphQL = async (toImport: GraphQLImport) => {
-    // Stage 0 : Memoize imports
-    if (loadedCache.has(toImport.id)) { // Prevent cyclic importations
-      return;
-    }
-    loadedCache.set(toImport.id, null);
     // Stage 1 : Load the requested document
-    let loaded = await invokePlugins(plugins, defaultPlugin, 'load', toImport);
+    let loaded = await invokePlugins(plugins, defaultPlugin, 'load', toImport.id);
     if (typeof loaded === 'string') {
-      loaded = parseSDLWithImports(loaded);
+      loaded = parseSDLWithImports(loaded, importRegex);
     }
-    loadedCache.set(toImport.id, loaded);
     // Stage 2 : Transform the AST if required
     if (loaded.document) {
-      loaded.document = await invokePlugins(plugins, defaultPlugin, 'transform', loaded.document);
+      loaded.document = await invokePlugins(plugins, defaultPlugin, 'transform', loaded.document, toImport);
+      loadedList.add(loaded.document);
     }
     // Stage 3 & 4 : Resolve imports IDs + Load recursively importations
     await Promise.all(
@@ -110,5 +143,5 @@ export const load = async (id: string, { plugins = [], ...config }: LoadOptions)
     );
   };
   await importGraphQL({ requested: '*', id: await invokePlugins(plugins, defaultPlugin, 'resolveId', id, undefined) });
-  return loadedCache as Map<string, GraphQLImportedDocument>;
+  return [...loadedList.values()];
 };

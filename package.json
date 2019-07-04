@@ -1,6 +1,6 @@
 {
   "name": "graphql-merge-import",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Like `graphql-import` but with types merging and import hooks",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -19,6 +19,7 @@
   "scripts": {
     "build": "rollup -c",
     "lint": "tslint -p tsconfig.json",
+    "format": "tslint -p tsconfig.json --fix",
     "prepare": "npm run build",
     "prepublishOnly": "npm test && npm run lint",
     "preversion": "npm run lint",
