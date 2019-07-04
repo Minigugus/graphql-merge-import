@@ -1,0 +1,12 @@
+{
+  "extends": [
+    "tslint:recommended"
+  ],
+  "rules": {
+    "no-conditional-assignment": false,
+    "interface-name": false,
+    "quotemark": {
+      "options": "single"
+    }
+  }
+}
