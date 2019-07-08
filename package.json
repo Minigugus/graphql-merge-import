@@ -13,6 +13,9 @@
     "type": "git",
     "url": "git+https://github.com/Minigugus/graphql-merge-import.git"
   },
+  "keywords": [
+    "graphql"
+  ],
   "author": "Florentin Magniez <43109623+Minigugus@users.noreply.github.com>",
   "license": "MIT",
   "private": true,
@@ -29,6 +32,7 @@
   "devDependencies": {
     "@babel/core": "^7.4.5",
     "@types/graphql": "^14.2.2",
+    "graphql-tools": "^4.0.5",
     "rollup": "^1.16.4",
     "rollup-plugin-babel": "^4.3.3",
     "rollup-plugin-node-resolve": "^5.2.0",
