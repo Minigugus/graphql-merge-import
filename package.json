@@ -1,6 +1,6 @@
 {
   "name": "graphql-merge-import",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Like `graphql-import` but with types merging and import hooks",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
